@@ -4,7 +4,7 @@ output: html_notebook
 ---
 
 ```{r}
-data <- read_csv("C:/Users/User/Downloads/data_analitycs/Diabetes-study/lab1-EDA/data/diabetic_data.csv")
+data <- read_csv("E:/diabetes_study/diabetic_data.csv")
 str(data, give.attr = FALSE)
 ```
 <<<<<<< Updated upstream
@@ -699,4 +699,206 @@ ggplot(data_filtered, aes(x=number_diagnoses)) +
 
 print(data_filtered)
 ```
+1. Довірчий інтервал для частки жінок
+
+```{r}
+n_fem <- sum(data$gender == "Female", na.rm = TRUE)
+n_patients <- sum(data$gender %in% c("Female", "Male"), na.rm = TRUE)
+p_hat <- n_fem / n_patients
+se <- sqrt(p_hat * (1 - p_hat) / n_patients)
+z <- qnorm(0.975)
+ci <- p_hat + c(-1, 1) * z * se
+round(ci, 3)
+
+```
+1.2 Довірчий інтервал для частки жінок
+```{r}
+x <- sum(data$gender == "Male", na.rm = TRUE)
+n <- sum(data$gender %in% c("Female", "Male"), na.rm = TRUE)
+p_hat <- x / n
+se <- sqrt(p_hat * (1 - p_hat) / n)
+z <- qnorm(0.975)
+ci_prop <- p_hat + c(-1, 1) * z * se
+round(ci_prop, 3)
+
+```
+
+
+2. Довірчий інтервал для середнього time_in_hospital
+
+
+```{r}
+x <- data$time_in_hospital
+n <- length(x)
+mean_x <- mean(x, na.rm = TRUE)
+sd_x <- sd(x, na.rm = TRUE)
+ci_mean <- mean_x + c(-1, 1) * z * sd_x / sqrt(n)
+round(ci_mean, 2)
+
+```
+3. Довірчий інтервал для коефіцієнта кореляції Пірсона між time_in_hospital і number_diagnoses (idk висновок, придуймайте, або не додавайте в лаб2)
+
+```{r}
+cor_pearson <- cor(data$time_in_hospital, data$number_diagnoses, method = "pearson", use = "complete.obs")
+n_corr <- sum(complete.cases(data$time_in_hospital, data$number_diagnoses))
+z_r <- 0.5 * log((1 + cor_pearson) / (1 - cor_pearson))
+se_z <- 1 / sqrt(n_corr - 3)
+ci_z <- z_r + c(-1, 1) * z * se_z
+ci_r <- (exp(2 * ci_z) - 1) / (exp(2 * ci_z) + 1)
+round(ci_r, 3)
+
+```
+4. Чи відрізняється середня тривалість госпіталізації між чоловіками та жінками?
+```{r}
+df_gender <- data %>% filter(gender %in% c("Female", "Male"))
+x1 <- df_gender %>% filter(gender == "Female") %>% pull(time_in_hospital)
+x2 <- df_gender %>% filter(gender == "Male") %>% pull(time_in_hospital)
+n1 <- length(x1); n2 <- length(x2)
+m1 <- mean(x1); m2 <- mean(x2)
+s1 <- sd(x1); s2 <- sd(x2)
+W <- (m1 - m2) / sqrt(s1^2 / n1 + s2^2 / n2)
+p_value <- 2 * (1 - pnorm(abs(W)))
+round(c("W" = W, "p-value" = p_value), 4)
+
+```
+Висновок:
+Якщо p < 0.05, відкидаємо H₀: є статистично значуща різниця.
+p<= 0.05, отже відкидаємо нульову гіпотезу (немає різниці) і вважаємо, що є різниця
+
+
+
+Чи відрізняється середня тривалість госпіталізації між чоловіками та жінками?
+```{r}
+
+female_sample <- df_gender %>% filter(gender == "Female") %>% pull(number_inpatient)
+male_sample   <- df_gender %>% filter(gender == "Male") %>% pull(number_inpatient)
+m1 <- mean(female_sample); m2 <- mean(male_sample)
+s1 <- sd(female_sample); s2 <- sd(male_sample)
+n1 <- length(female_sample); n2 <- length(male_sample)
+W <- (m1 - m2) / sqrt(s1^2 / n1 + s2^2 / n2)
+p_value <- 1 - pnorm(W)  # односторонній
+round(c("W" = W, "p-value" = p_value), 4)
+
+
+```
+H₀ (нульова гіпотеза)(середня кількість госпіталізацій у жінок не перевищує таку у чоловіків)
+
+H₁ (альтернативна гіпотеза):(середня кількість госпіталізацій у жінок більша, ніж у чоловіків)
+Якщо p-value < 0.05 — відкидаємо H₀, визнаємо, що у жінок середня кількість госпіталізацій статистично значуще вища.
+
+
+
+Чи частка жінок із ≥3 госпіталізаціями не перевищує частку чоловіків?
+```{r}
+p_fem <- mean(female_sample >= 3)
+p_mal <- mean(male_sample >= 3)
+n_fem <- length(female_sample); n_mal <- length(male_sample)
+se_diff <- sqrt(p_fem*(1-p_fem)/n_fem + p_mal*(1-p_mal)/n_mal)
+W <- (p_fem - p_mal) / se_diff
+p_value <- 1 - pnorm(W)
+round(c("W" = W, "p-value" = p_value), 4)
+
+```
+H₀ (нульова гіпотеза):(частка жінок із ≥3 госпіталізаціями не перевищує частку чоловіків)
+
+H₁ (альтернативна гіпотеза):(частка жінок із ≥3 госпіталізаціями більша, ніж у чоловіків)
+Якщо p-value < 0.05 — відкидаємо H₀, визнаємо, що серед жінок частка з ≥3 госпіталізаціями дійсно більша.
+
+
+
+
+Довірчий інтервал для частки пацієнтів із повторною госпіталізацією (readmitted = '<30')
+
+```{r}
+x <- sum(data$readmitted == "<30", na.rm = TRUE)
+n <- sum(!is.na(data$readmitted))
+p_hat <- x / n
+se <- sqrt(p_hat * (1 - p_hat) / n)
+z <- qnorm(0.975)
+ci_readm <- p_hat + c(-1, 1) * z * se
+round(ci_readm, 3)
+
+```
+Довірчий інтервал для частки пацієнтів із повторною госпіталізацією (readmitted = '>30')
+```{r}
+x <- sum(data$readmitted == ">30", na.rm = TRUE)
+n <- sum(!is.na(data$readmitted))
+p_hat <- x / n
+se <- sqrt(p_hat * (1 - p_hat) / n)
+z <- qnorm(0.975)
+ci_readm <- p_hat + c(-1, 1) * z * se
+round(ci_readm, 3)
+
+```
+Довірчий інтервал для частки пацієнтів із повторною госпіталізацією (readmitted = 'NO')
+```{r}
+x <- sum(data$readmitted == "NO", na.rm = TRUE)
+n <- sum(!is.na(data$readmitted))
+p_hat <- x / n
+se <- sqrt(p_hat * (1 - p_hat) / n)
+z <- qnorm(0.975)
+ci_readm <- p_hat + c(-1, 1) * z * se
+round(ci_readm, 3)
+
+```
+
+
+Гіпотеза:
+
+H₀: Частка ≤ 10%
+
+H₁: Частка > 10% (одностороння)
+Тест Волда:
+
+```{r}
+W <- (p_hat - 0.10) / se
+p_value <- 1 - pnorm(W)
+round(p_value, 4)
+
+```
+
+Порівняння середньої кількості діагнозів у різних вікових групах
+Пояснення:
+Перевірка, чи середня кількість діагнозів у групі 70–80 років більша, ніж у групі 40–50 років.
+```{r}
+x1 <- data %>% filter(age == '[70-80)') %>% pull(number_diagnoses)
+x2 <- data %>% filter(age == '[40-50)') %>% pull(number_diagnoses)
+m1 <- mean(x1, na.rm = TRUE); m2 <- mean(x2, na.rm = TRUE)
+s1 <- sd(x1, na.rm = TRUE); s2 <- sd(x2, na.rm = TRUE)
+n1 <- length(x1); n2 <- length(x2)
+W <- (m1 - m2) / sqrt(s1^2/n1 + s2^2/n2)
+p_value <- 1 - pnorm(W)  # односторонній тест
+round(c("W" = W, "p-value" = p_value), 4)
+
+```
+H₀: Середня кількість діагнозів у групі 70–80 років ≤ у групі 40–50 років
+
+H₁: Середня кількість діагнозів у групі 70–80 років > у групі 40–50 років
+29.65 — дуже велике позитивне значення, що свідчить про сильний зсув у бік альтернативної гіпотези.
+
+
+Чи відрізняється медіана тривалості госпіталізації між екстреною та плановою госпіталізацією?
+```{r}
+emerg <- data %>% filter(admission_type_id == "Невідкладна допомога") %>% pull(time_in_hospital)
+plan <- data %>% filter(admission_type_id == "Планова госпіталізація") %>% pull(time_in_hospital)
+
+# Функція для бутстрепу різниці медіан
+boot_med_diff <- function(data, indices) {
+  emerg_boot <- sample(emerg, length(emerg), replace = TRUE)
+  plan_boot <- sample(plan, length(plan), replace = TRUE)
+  return(median(emerg_boot, na.rm = TRUE) - median(plan_boot, na.rm = TRUE))
+}
+
+boot_diff <- boot(data = 1:length(emerg), statistic = boot_med_diff, R = 2000)
+boot.ci(boot_diff, type = c("perc", "bca"))
+
+```
+Довірчий інтервал для різниці медіан тривалості перебування між екстреною та плановою госпіталізацією становить [0; 1] днів. Це означає, що, з імовірністю 95%, медіана для екстрених випадків не більше ніж на 1 день перевищує медіану планових, але може і не відрізнятися зовсім.
+
+
+
+
+
+
+
 
