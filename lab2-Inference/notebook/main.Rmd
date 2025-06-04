@@ -1,0 +1,548 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2)
+library(tibble)
+library(boot)
+library(dplyr)
+data <- read_csv("C:/Users/User/Downloads/data_analitycs/Diabetes-study/lab1-EDA/data/diabetic_data.csv")
+str(data, give.attr = FALSE)
+options(scipen = 999)
+```
+
+
+1) Середнє number_diagnoses
+
+* коротка статистика по змінній
+```{r}
+
+number_diagnoses_mean <- mean(data$number_diagnoses, na.rm = TRUE)
+number_diagnoses_median <- median(data$number_diagnoses, na.rm = TRUE)
+number_diagnoses_sd <- sd(data$number_diagnoses, na.rm = TRUE)
+number_diagnoses_n <- sum(!is.na(data$number_diagnoses))
+number_diagnoses_min_value <- min(data$number_diagnoses, na.rm = TRUE)
+number_diagnoses_max_value <- max(data$number_diagnoses, na.rm = TRUE)
+
+
+summary_table <- data.frame(
+  Показник = c("Середнє", "Медіана", "Стандартне відхилення", "Кількість спостережень", "Мінімум", "Максимум"),
+  Значення = c(number_diagnoses_mean, number_diagnoses_median, number_diagnoses_sd, number_diagnoses_n, number_diagnoses_min_value, number_diagnoses_max_value)
+)
+
+print(summary_table)
+```
+*будуємо боксплот
+
+```{r}
+ggplot(data, aes(y = number_diagnoses)) +
+  geom_boxplot(fill = "lightgreen", color = "darkgreen") +
+  labs(title = "Boxplot для кількості діагнозів", y = "Кількість діагнозів") +
+  theme_minimal()
+
+```
+
+
+*перевірка номральності розподілу 
+```{r}
+
+ggplot(data, aes(sample = number_diagnoses)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  labs(title = "QQ-Plot для перевірки нормальності",
+       x = "Теоретичні квантілі",
+       y = "Спостережувані квантілі") +
+  theme_minimal()
+
+```
+
+*сам інтервал
+
+```{r}
+
+number_diagnoses_se = number_diagnoses_sd / sqrt(number_diagnoses_n)
+
+t_crit <- qt(0.975, df = number_diagnoses_n - 1)
+
+lower <- number_diagnoses_mean - t_crit * number_diagnoses_se
+upper <- number_diagnoses_mean + t_crit * number_diagnoses_se
+
+summary_table <- tibble(number_diagnoses_mean, number_diagnoses_sd, number_diagnoses_n, lower, upper)
+
+print(summary_table)
+
+```
+
+2) кореляція між num_medications та num_lab_procedures (boot)
+
+
+*Scatterplot + LOESS + norm двох змінних
+
+```{r}
+
+library(ggpubr)  # для stat_cor
+
+# Припустимо, у вас вже є датафрейм `data`
+ggplot(data, aes(x = num_medications, y = num_lab_procedures)) +
+  geom_point(alpha = 0.6, color = "#1f77b4") +  # точки
+  geom_smooth(method = "loess", se = FALSE, color = "red", size = 1) +  # LOESS-крива
+  stat_ellipse(type = "norm", linetype = 2, color = "darkgreen") +  # еліпс
+  theme_minimal() +
+  labs(
+    x = "Кількість медикаментів (num_medications)",
+    y = "Кількість лабораторних процедур (num_lab_procedures)",
+    title = "Scatterplot: num_medications vs num_lab_procedures"
+  )
+
+```
+
+*рахуємо кореляцію 
+
+```{r}
+cor.test(data$num_medications, data$num_lab_procedures, method = "spearman")
+```
+
+
+*рахуємо інтервали
+
+```{r}
+# Функція для обчислення кореляції Спірмана
+
+spearman_cor_stud <- function(data, indices) {
+  d <- data[indices, ]
+  
+  rho_hat <- cor(d$num_medications, d$num_lab_procedures, method = "spearman")
+  
+  # Внутрішній бутстреп для оцінки стандартної похибки
+  inner_boot <- boot(
+    data = d,
+    statistic = function(inner_data, i) {
+      cor(inner_data[i, "num_medications"], inner_data[i, "num_lab_procedures"], method = "spearman")
+    },
+    R = 100
+  )
+  
+  se_hat <- sd(inner_boot$t, na.rm = TRUE)
+  
+  return(c(rho_hat, se_hat))
+}
+```
+
+```{r}
+set.seed(123)
+data_small <- data[sample(nrow(data), 10000), ]
+
+boot_out <- boot(
+  data = data_small,
+  statistic = spearman_cor_stud,
+  R = 1000
+)
+
+
+ci_perc2  <- boot.ci(boot_out, type = "perc")   # Percentile
+ci_basic2 <- boot.ci(boot_out, type = "basic")  # Basic
+ci_stud  <- boot.ci(boot_out, type = "stud")   # Studentized
+
+
+```
+
+```{r}
+print(ci_stud)
+```
+
+
+*виводимо таблицю інтервалів
+```{r}
+ci_table <- tibble::tibble(
+  Type = c("Percentile", "Basic", "Studentized"),
+  Lower = c(
+    ci_perc2$perc[4],
+    ci_basic2$basic[4],
+    ci_stud$student[4]
+  ),
+  Upper = c(
+    ci_perc2$perc[5],
+    ci_basic2$basic[5],
+    ci_stud$student[5]
+  )
+)
+
+print(ci_table)
+
+```
+
+*розподіл кореляції
+
+```{r}
+ci <- ci_perc2$perc[4:5]
+df <- data.frame(rho = boot_corr)
+ggplot(df, aes(x = rho)) +
+  geom_histogram(aes(y = ..density..), bins = 40, fill = "#1f77b4", alpha = 0.6) +
+  geom_density(color = "red", size = 1)  +
+  geom_vline(xintercept = ci, color = "darkgreen", linetype = "dotted", linewidth = 1) +
+  annotate("text", x = ci[1], y = 1, label = paste0("Ліва межа: ", round(ci[1], 3)),
+           hjust = 1.1, color = "darkgreen", size = 4) +
+  annotate("text", x = ci[2], y = 1, label = paste0("Права межа: ", round(ci[2], 3)),
+           hjust = -0.1, color = "darkgreen", size = 4) +
+  theme_minimal() +
+  labs(
+    title = "Розподіл бутстреп-оцінок кореляції Спірмана",
+    subtitle = "Довірчий інтервал типу Percentile",
+    x = expression(rho ~ "(бутстреп-оцінки)"),
+    y = "Щільність"
+  )
+
+```
+
+
+* перевірка гіпотези тестом Волда
+
+```{r}
+rho_hat <- mean(boot_out$t[,1], na.rm = TRUE)
+
+# Стандартна похибка
+se_hat <- sd(boot_out$t[,1], na.rm = TRUE)
+
+# Тестова статистика
+z <- rho_hat / se_hat
+
+# P-value (двосторонній тест)
+p_value <- 2 * (1 - pnorm(abs(z)))
+
+alpha <- 0.05
+z_crit <- qnorm(1 - alpha / 2) 
+
+cat("Wald-тест: z =", round(z, 3), ", p =", format.pval(p_value, digits = 5), ", z_crit = ", round(z_crit,3))
+
+```
+
+3) Дослвідження різниці середньої кількості амбулаторних відвідувань між чоловіками та жінками
+
+*боксплот для number_outpatient
+
+```{r}
+data %>%
+  count(gender, number_outpatient) %>%
+  ggplot(aes(x = factor(number_outpatient), y = n, fill = gender)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  labs(title = "Частоти number_outpatient за статтю",
+       x = "Значення number_outpatient",
+       y = "Кількість") +
+  theme_minimal()
+```
+*перевірка на гомогенність дисперсій
+
+```{r}
+
+fligner.test(number_outpatient ~ gender, data = data)
+
+```
+*побудова інтервалу
+
+```{r}
+
+# Групи
+x1 <- data$number_outpatient[data$gender == "Female"]
+x2 <- data$number_outpatient[data$gender == "Male"]
+
+# Розміри вибірок
+n1 <- length(x1)
+n2 <- length(x2)
+
+# Середні значення
+mean1 <- mean(x1, na.rm = TRUE)
+mean2 <- mean(x2, na.rm = TRUE)
+
+# Вибіркові дисперсії
+s1_sq <- var(x1, na.rm = TRUE)
+s2_sq <- var(x2, na.rm = TRUE)
+
+# Стандартна похибка
+SE <- sqrt(s1_sq / n1 + s2_sq / n2)
+
+# Критичне значення z для 95% довірчого інтервалу
+z <- qnorm(0.975)  # ≈ 1.96
+
+# Межі інтервалу
+diff <- mean1 - mean2
+CI_lower <- diff - z * SE
+CI_upper <- diff + z * SE
+
+# Результат
+cat("95% Довірчий інтервал для різниці середніх (z):\n")
+cat(sprintf("[%.3f, %.3f]\n", CI_lower, CI_upper))
+
+```
+*проводимо тест волда
+
+```{r}
+
+# Тестова статистика Вальда (z)
+z_stat <- (mean1 - mean2) / SE
+
+# P-value для двостороннього тесту
+p_value <- 2 * (1 - pnorm(abs(z_stat)))
+
+# Вивід
+cat("Wald тест для різниці середніх:\n")
+cat(sprintf("z = %.3f\n", z_stat))
+cat(sprintf("p-value = %.5f\n", p_value))
+
+
+```
+
+Довірчий інтервал для частки жінок
+
+```{r}
+n_fem <- sum(data$gender == "Female", na.rm = TRUE)
+n_patients <- sum(data$gender %in% c("Female", "Male"), na.rm = TRUE)
+p_hat <- n_fem / n_patients
+se <- sqrt(p_hat * (1 - p_hat) / n_patients)
+z <- qnorm(0.975)
+ci <- p_hat + c(-1, 1) * z * se
+
+cat("95% Довірчий інтервал для частки жінок:\n")
+cat("[",ci,"]")
+```
+
+Довірчий інтервал для частки чоловіків
+
+```{r}
+x <- sum(data$gender == "Male", na.rm = TRUE)
+n <- sum(data$gender %in% c("Female", "Male"), na.rm = TRUE)
+p_hat <- x / n
+se <- sqrt(p_hat * (1 - p_hat) / n)
+z <- qnorm(0.975)
+ci_prop <- p_hat + c(-1, 1) * z * se
+round(ci_prop, 3)
+
+cat("95% Довірчий інтервал для частки чоловіків:\n")
+cat("[",ci_prop,"]")
+
+```
+Довірчий інтервал для середнього time_in_hospital
+
+```{r}
+x <- data$time_in_hospital
+n <- length(x)
+mean_x <- mean(x, na.rm = TRUE)
+sd_x <- sd(x, na.rm = TRUE)
+ci_mean <- mean_x + c(-1, 1) * z * sd_x / sqrt(n)
+cat("95% Довірчий інтервал для для середнього time_in_hospital:\n")
+cat("[",ci_mean,"]")
+cat(sd_x / sqrt(n))
+```
+
+Чи відрізняється середня тривалість госпіталізації між чоловіками та жінками?
+```{r}
+df_gender <- data %>% filter(gender %in% c("Female", "Male"))
+x1 <- df_gender %>% filter(gender == "Female") %>% pull(time_in_hospital)
+x2 <- df_gender %>% filter(gender == "Male") %>% pull(time_in_hospital)
+n1 <- length(x1); n2 <- length(x2)
+m1 <- mean(x1); m2 <- mean(x2)
+s1 <- sd(x1); s2 <- sd(x2)
+W <- (m1 - m2) / sqrt(s1^2 / n1 + s2^2 / n2)
+p_value <- 2 * (1 - pnorm(abs(W)))
+
+
+cat("Wald тест для різниці середніх:\n")
+cat(sprintf("W = %.3f\n", z_stat))
+cat(sprintf("p-value = %.5f\n", p_value))
+```
+*боксплот побудуємо 
+
+
+```{r}
+ggplot(data %>% filter(gender %in% c("Female", "Male")), 
+       aes(x = gender, y = time_in_hospital)) +
+  geom_boxplot(fill = "lightblue") +
+  theme_minimal()
+
+```
+Чи відрізняється середня тривалість госпіталізації між чоловіками та жінками?
+```{r}
+female_sample <- df_gender %>% filter(gender == "Female") %>% pull(number_inpatient)
+male_sample   <- df_gender %>% filter(gender == "Male") %>% pull(number_inpatient)
+m1 <- mean(female_sample); m2 <- mean(male_sample)
+s1 <- sd(female_sample); s2 <- sd(male_sample)
+n1 <- length(female_sample); n2 <- length(male_sample)
+W <- (m1 - m2) / sqrt(s1^2 / n1 + s2^2 / n2)
+p_value <- 1 - pnorm(W)  # односторонній
+
+cat("Односторонній тест Вальда для порівняння середніх :\n")
+cat(sprintf("W = %.3f\n", z_stat))
+cat(sprintf("p-value = %.5f\n", p_value))
+```
+H₀ (нульова гіпотеза)(середня кількість госпіталізацій у жінок не перевищує таку у чоловіків)
+
+H₁ (альтернативна гіпотеза):(середня кількість госпіталізацій у жінок більша, ніж у чоловіків)
+Якщо p-value < 0.05 — відкидаємо H₀, визнаємо, що у жінок середня кількість госпіталізацій статистично значуще вища.
+
+
+
+
+Чи частка жінок із ≥3 госпіталізаціями не перевищує частку чоловіків?
+```{r}
+p_fem <- mean(female_sample >= 3)
+p_mal <- mean(male_sample >= 3)
+n_fem <- length(female_sample); n_mal <- length(male_sample)
+se_diff <- sqrt(p_fem*(1-p_fem)/n_fem + p_mal*(1-p_mal)/n_mal)
+W <- (p_fem - p_mal) / se_diff
+p_value <- 1 - pnorm(W)
+
+cat(se_diff)
+
+cat("Wald тест :\n")
+cat(sprintf("W = %.3f\n", z_stat))
+cat(sprintf("p-value = %.5f\n", p_value))
+```
+H₀ (нульова гіпотеза):(частка жінок із ≥3 госпіталізаціями не перевищує частку чоловіків)
+
+H₁ (альтернативна гіпотеза):(частка жінок із ≥3 госпіталізаціями більша, ніж у чоловіків)
+Якщо p-value < 0.05 — відкидаємо H₀, визнаємо, що серед жінок частка з ≥3 госпіталізаціями дійсно більша.
+
+
+
+Довірчий інтервал для частки пацієнтів із повторною госпіталізацією (readmitted = '<30')
+
+```{r}
+x <- sum(data$readmitted == "<30", na.rm = TRUE)
+n <- sum(!is.na(data$readmitted))
+p_hat_30 <- x / n
+se <- sqrt(p_hat * (1 - p_hat_30) / n)
+z <- qnorm(0.975)
+ci_readm_30 <- p_hat_30 + c(-1, 1) * z * se
+round(ci_readm, 3)
+```
+Довірчий інтервал для частки пацієнтів із повторною госпіталізацією (readmitted = '>30')
+```{r}
+x <- sum(data$readmitted == ">30", na.rm = TRUE)
+n <- sum(!is.na(data$readmitted))
+p_hat_30plus <- x / n
+se <- sqrt(p_hat * (1 - p_hat_30plus) / n)
+z <- qnorm(0.975)
+ci_readm_30plus <- p_hat_30plus + c(-1, 1) * z * se
+round(ci_readm, 3)
+```
+Довірчий інтервал для частки пацієнтів із повторною госпіталізацією (readmitted = 'NO')
+```{r}
+x <- sum(data$readmitted == "NO", na.rm = TRUE)
+n <- sum(!is.na(data$readmitted))
+p_hat_NO <- x / n
+se <- sqrt(p_hat * (1 - p_hat_NO) / n)
+z <- qnorm(0.975)
+ci_readm_NO <- p_hat_NO + c(-1, 1) * z * se
+round(ci_readm, 3)
+```
+  
+```{r}
+ci_table <- data.frame(
+  category = c("<30", ">30", "NO"),
+  CI_lower = c(ci_readm_30[1], ci_readm_30plus[1], ci_readm_NO[1]),
+  CI_upper = c(ci_readm_30[2], ci_readm_30plus[2], ci_readm_NO[2])
+)
+
+# Додай p_hat, якщо зберігав окремо:
+ci_table$p_hat <- c(p_hat_30, p_hat_30plus, p_hat_NO)
+
+ci_table
+
+```
+
+Гіпотеза:
+
+H₀: Частка ≤ 10%
+
+H₁: Частка > 10% (одностороння)
+Тест Волда:
+
+```{r}
+W <- (p_hat_NO - 0.10) / se
+p_value <- 1 - pnorm(W)
+
+cat("Wald тест :\n")
+cat(sprintf("W = %.3f\n", W))
+cat(sprintf("p-value = %.5f\n", p_value))
+
+se
+```
+
+Довірчий інтервал для коефіцієнта кореляції Пірсона між time_in_hospital і number_diagnoses (idk висновок, придуймайте, або не додавайте в лаб2)
+
+```{r}
+cor_pearson <- cor(data$time_in_hospital, data$number_diagnoses, method = "pearson", use = "complete.obs")
+n_corr <- sum(complete.cases(data$time_in_hospital, data$number_diagnoses))
+z_r <- 0.5 * log((1 + cor_pearson) / (1 - cor_pearson))
+se_z <- 1 / sqrt(n_corr - 3)
+ci_z <- z_r + c(-1, 1) * z * se_z
+ci_r <- (exp(2 * ci_z) - 1) / (exp(2 * ci_z) + 1)
+cat("95% Довірчий інтервал для для кореляції:\n")
+cat("[",ci_r,"]")
+cat("SE= ", se)
+```
+Порівняння середньої кількості діагнозів у різних вікових групах
+Пояснення:
+Перевірка, чи середня кількість діагнозів у групі 70–80 років більша, ніж у групі 40–50 років.
+```{r}
+x1 <- data %>% filter(age == '[70-80)') %>% pull(number_diagnoses)
+x2 <- data %>% filter(age == '[40-50)') %>% pull(number_diagnoses)
+m1 <- mean(x1, na.rm = TRUE); m2 <- mean(x2, na.rm = TRUE)
+s1 <- sd(x1, na.rm = TRUE); s2 <- sd(x2, na.rm = TRUE)
+n1 <- length(x1); n2 <- length(x2)
+W <- (m1 - m2) / sqrt(s1^2/n1 + s2^2/n2)
+p_value <- 1 - pnorm(W)  # односторонній тест
+
+cat("Wald тест :\n")
+round(c("W" = W, "p-value" = p_value), 4)
+```
+
+
+
+Чи відрізняється медіана тривалості госпіталізації між екстреною та плановою госпіталізацією?
+```{r}
+emerg <- data %>%
+  filter(admission_type_id == 1) %>%
+  pull(time_in_hospital)
+
+plan <- data %>%
+  filter(admission_type_id == 3) %>%
+  pull(time_in_hospital)
+# Функція для бутстрепу різниці медіан
+boot_med_diff <- function(data, indices) {
+  emerg_boot <- sample(emerg, length(emerg), replace = TRUE)
+  plan_boot <- sample(plan, length(plan), replace = TRUE)
+  return(median(emerg_boot, na.rm = TRUE) - median(plan_boot, na.rm = TRUE))
+}
+boot_diff <- boot(data = 1:length(emerg), statistic = boot_med_diff, R = 2000)
+boot.ci(boot_diff, type = c("perc", "bca"))
+```
+```{r}
+# 1. Витягнути бутстреп-оцінки
+boot_dist <- boot_diff$t[, 1]  # Вектор з різницями медіан
+
+# 2. Отримати довірчі інтервали
+ci <- boot.ci(boot_diff, type = c("perc", "bca"))
+
+# 3. Витягнути межі інтервалів
+ci_perc <- ci$percent[4:5]  # нижня і верхня межа percent CI
+ci_bca  <- ci$bca[4:5]      # нижня і верхня межа BCa CI
+
+# 4. Побудова графіка
+df <- data.frame(diff = boot_dist)
+
+ggplot(df, aes(x = diff)) +
+  geom_histogram(aes(y = ..density..), bins = 40, fill = "#1f77b4", alpha = 0.6) +
+  geom_density(color = "red", size = 1) +
+  geom_vline(xintercept = mean(boot_dist), color = "blue", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = ci_perc, color = "darkgreen", linetype = "dotted", size = 1.2) +
+  geom_vline(xintercept = ci_bca, color = "purple", linetype = "dotdash", size = 1.2) +
+  labs(
+    title = "Бутстреп-розподіл різниці медіан тривалості госпіталізації",
+    x = "Різниця медіан (екстрена - планова)",
+    y = "Щільність",
+    subtitle = paste0("Синя лінія — середнє; Зелена — perc CI; Фіолетова — BCa CI")
+  ) +
+  theme_minimal()
+```
