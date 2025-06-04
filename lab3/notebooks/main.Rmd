@@ -1,0 +1,16 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+
+library(ggplot2)
+library(tibble)
+library(boot)
+library(dplyr)
+data <- read_csv("C:/Users/User/Downloads/data_analitycs/Diabetes-study/lab1-EDA/data/diabetic_data.csv")
+str(data, give.attr = FALSE)
+options(scipen = 999)
+
+```
