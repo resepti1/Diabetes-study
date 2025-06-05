@@ -14,3 +14,296 @@ str(data, give.attr = FALSE)
 options(scipen = 999)
 
 ```
+
+---КРОК 0--- підготовка даних
+```{r}
+
+# ДОСЛІДЖЕННЯ ПРОПУЩЕНИХ ЗНАЧЕНЬ ВАЖЛИВИХ ЗМІННИХ
+
+important_vars <- c("number_diagnoses", "readmitted", "age", "gender", "race",
+                    "admission_type_id", "admission_source_id", "discharge_disposition_id",
+                    "time_in_hospital", "number_inpatient", "number_emergency", "number_outpatient",
+                    "insulin", "diabetesMed", "A1Cresult")
+
+missing_summary <- data %>%
+  summarize(across(all_of(important_vars), ~ mean(is.na(.))*100)) %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "missing_percent") %>%
+  arrange(desc(missing_percent))
+
+print(missing_summary)
+
+```
+
+```{r}
+
+# Створення бінарної змінної: 1 — якщо readmitted == "<30", інакше 0
+data <- data %>%
+  mutate(readmit30 = ifelse(readmitted == "<30", 1, 0))
+
+```
+
+```{r}
+
+table(data$readmitted, useNA = "ifany")
+table(data$readmit30, useNA = "ifany")
+mean(data$readmit30, na.rm = TRUE)  # % повторної госпіталізації < 30 днів
+
+```
+```{r}
+
+# Приводимо до факторів
+data <- data %>%
+  mutate(
+    readmit30 = factor(readmit30, levels = c(0, 1), labels = c("Ні", "Так")),
+    insulin = factor(insulin),
+    A1Cresult = factor(A1Cresult),
+    diabetesMed = factor(diabetesMed),
+    admission_type_id = factor(admission_type_id),
+    admission_source_id = factor(admission_source_id),
+    discharge_disposition_id = factor(discharge_disposition_id)
+  )
+
+
+```
+
+```{r}
+
+#назви для *_id змінних (з мапінгів)
+data <- data %>%
+  mutate(
+    admission_type_id = as.numeric(as.character(admission_type_id)),
+    admission_source_id = as.numeric(as.character(admission_source_id)),
+    discharge_disposition_id = as.numeric(as.character(discharge_disposition_id))
+  ) %>%
+  left_join(mapping_admission_type_id, by = "admission_type_id") %>%
+  rename(admission_type = description) %>%
+  left_join(mapping_admission_source_id, by = "admission_source_id") %>%
+  rename(admission_source = description) %>%
+  left_join(mapping_discharge_disposition_id, by = "discharge_disposition_id") %>%
+  rename(discharge_disposition = description) %>%
+  mutate(across(c(admission_type, admission_source, discharge_disposition), as.factor))
+
+```
+
+```{r}
+
+data %>% 
+  select(admission_type_id, admission_type,
+         admission_source_id, admission_source,
+         discharge_disposition_id, discharge_disposition) %>%
+  head()
+```
+---Крок 1--- EDA важливих змінних
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+
+# 1. Таблиця розподілу цільової змінної
+table(data$readmit30)
+prop.table(table(data$readmit30))
+
+# 2. Демографія — фактори
+data %>%
+  select(age, gender, race) %>%
+  summarise(across(everything(), ~ n_distinct(.)))
+
+# 3. Гістограми кількісних змінних
+g1 <- ggplot(data, aes(x = number_diagnoses)) + 
+  geom_histogram(binwidth = 1, fill = "steelblue") +
+  labs(title = "Кількість діагнозів")
+
+g2 <- ggplot(data, aes(x = time_in_hospital)) + 
+  geom_histogram(binwidth = 1, fill = "darkgreen") +
+  labs(title = "Тривалість госпіталізації")
+
+g3 <- ggplot(data, aes(x = number_inpatient)) + 
+  geom_bar(fill = "orange") +
+  labs(title = "Кількість стаціонарних візитів")
+
+
+grid.arrange(g1, g2, g3, nrow = 1)
+
+# 4. Частоти для факторів
+table(data$admission_type)
+table(data$admission_source)
+table(data$A1Cresult)
+table(data$insulin)
+
+# 5. Перехресна таблиця цільової змінної і факторів
+table(data$readmit30, data$admission_type)
+table(data$readmit30, data$A1Cresult)
+table(data$readmit30, data$insulin)
+
+# 6. Кореляція між числовими змінними (без факторів)
+data %>%
+  select(number_diagnoses, time_in_hospital, number_inpatient, number_emergency) %>%
+  cor(use = "complete.obs")
+
+
+```
+
+
+```{r}
+
+# Пакети
+library(tidyverse)
+library(ggplot2)
+library(reshape2)
+library(ggcorrplot)
+
+# Обираємо числові змінні
+numeric_vars <- data %>%
+  select(number_diagnoses, time_in_hospital, number_inpatient, number_emergency)
+
+# Обчислюємо кореляційну матрицю
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+
+# Побудова теплової карти
+ggcorrplot(cor_matrix,
+           method = "square",
+           type = "lower",
+           lab = TRUE,
+           colors = c("blue", "white", "red"),
+           title = "Кореляція між числовими змінними",
+           lab_size = 4,
+           tl.cex = 12,
+           ggtheme = ggplot2::theme_minimal())
+
+# Зберегти в файл для вставки у презентацію
+ggsave("correlation_heatmap.png", width = 6, height = 5, dpi = 300)
+
+
+```
+
+
+---КРОК 2--- Моделювання
+
+```{r}
+# 0. Підключення потрібних пакетів
+library(sandwich)
+library(lmtest)
+library(dplyr)
+
+# 1. Побудова моделей
+model1 <- glm(readmit30 ~ number_diagnoses,
+              data = data, family = binomial)
+
+model2 <- glm(readmit30 ~ number_diagnoses + age + gender + race,
+              data = data, family = binomial)
+
+model3 <- glm(readmit30 ~ number_diagnoses + 
+                            age + gender + race + 
+                            admission_type + 
+                            time_in_hospital + number_inpatient + number_emergency +
+                            A1Cresult + insulin,
+              data = data, family = binomial)
+
+# 2. Функція для отримання кластеризованих похибок
+get_cluster_se <- function(model, cluster_var) {
+  vcovCL(model, cluster = cluster_var)
+}
+
+# 3. Функція для таблиці результатів з кластеризованими похибками
+extract_clustered_info <- function(model, cluster_var) {
+  # Кластеризована ков. матриця
+  cl_vcov <- vcovCL(model, cluster = cluster_var)
+  
+  # Коефіцієнти + p-значення
+  coef_test <- coeftest(model, vcov. = cl_vcov)
+  
+  # Логітні коефіцієнти
+  logit_coef <- coef(model)
+  
+  # OR та CI на основі логітів
+  OR <- exp(logit_coef)
+  CI <- exp(confint.default(model, vcov. = cl_vcov))
+  
+  data.frame(
+    Term = rownames(coef_test),
+    OddsRatio = round(OR, 3),
+    CI_low = round(CI[, 1], 3),
+    CI_high = round(CI[, 2], 3),
+    p_value = round(coef_test[, 4], 4)
+  )
+}
+
+# 4. Отримання результатів
+results1 <- extract_clustered_info(model1, ~ patient_nbr)
+results2 <- extract_clustered_info(model2, ~ patient_nbr)
+results3 <- extract_clustered_info(model3, ~ patient_nbr)
+
+# 5. Збереження у CSV (або просто перегляд)
+write.csv(results1, "model1_clustered.csv", row.names = FALSE)
+write.csv(results2, "model2_clustered.csv", row.names = FALSE)
+write.csv(results3, "model3_clustered.csv", row.names = FALSE)
+
+# 6. Перегляд
+print(results1)
+print(results2)
+print(results3)
+
+
+
+```
+---КРОК 3--- перевірка на стійкість
+
+```{r}
+
+#  поліном основної змінної
+
+data <- data %>%
+  mutate(number_diagnoses2 = number_diagnoses^2)
+
+model_poly <- glm(readmit30 ~ number_diagnoses + number_diagnoses2 + age + gender + race +
+                    admission_type + time_in_hospital + number_inpatient +
+                    number_emergency + A1Cresult + insulin,
+                  data = data, family = binomial)
+
+summary(model_poly)
+
+
+```
+```{r}
+
+# взаємодія number_diagnoses * age_group
+data <- data %>%
+  mutate(age60plus = ifelse(age %in% c("[60-70)", "[70-80)", "[80-90)", "[90-100)"), 1, 0))
+
+model_interaction <- glm(readmit30 ~ number_diagnoses * age60plus + age + gender + race +
+                          admission_type + time_in_hospital + number_inpatient +
+                          number_emergency + A1Cresult + insulin,
+                         data = data, family = binomial)
+
+
+summary(model_interaction)
+```
+
+
+тестування груп коефіцієнтів
+
+```{r}
+
+library(lmtest)
+library(car)
+
+model_full <- model3
+
+# Тестування групи race
+model_no_race <- update(model_full, . ~ . - race)
+waldtest(model_full, model_no_race, test = "Chisq")
+
+# Тестування групи age
+model_no_age <- update(model_full, . ~ . - age)
+waldtest(model_full, model_no_age, test = "Chisq")
+
+# Тестування групи insulin
+model_no_insulin <- update(model_full, . ~ . - insulin)
+waldtest(model_full, model_no_insulin, test = "Chisq")
+
+# Тестування групи A1Cresult
+model_no_a1c <- update(model_full, . ~ . - A1Cresult)
+waldtest(model_full, model_no_a1c, test = "Chisq")
+
+```
